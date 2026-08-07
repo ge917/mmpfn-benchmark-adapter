@@ -1,0 +1,173 @@
+"""Dataset registry for reproducible MMPFN benchmark runs.
+
+Adding a prepared dataset only requires one :class:`DatasetSpec` entry.  Raw
+MulTaBench datasets use the official Kaggle ``data.csv + metadata.json +
+images/`` contract and are converted by ``mmpfn.prepare_multabench``.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Literal
+
+
+Task = Literal["classification", "regression"]
+Benchmark = Literal["vtbench", "multabench"]
+
+
+@dataclass(frozen=True)
+class DatasetSpec:
+    key: str
+    display_name: str
+    benchmark: Benchmark
+    task: Task
+    primary_metric: str
+    higher_is_better: bool
+    n_classes: int | None = None
+    expected_rows: int | None = None
+    expected_structured_features: int | None = None
+    text_features: int = 0
+    kaggle_slug: str | None = None
+    legacy_vtbench_name: str | None = None
+    image_encoding: str = "image_file"
+    default_max_train_context: int = 0
+    target_standardization: str = "none"
+
+
+def _vt(
+    key: str,
+    display_name: str,
+    task: Task,
+    *,
+    legacy: str | None = None,
+    image_encoding: str = "zero_one",
+) -> DatasetSpec:
+    is_classification = task == "classification"
+    return DatasetSpec(
+        key=key,
+        display_name=display_name,
+        benchmark="vtbench",
+        task=task,
+        primary_metric="accuracy" if is_classification else "mae",
+        higher_is_better=is_classification,
+        legacy_vtbench_name=legacy,
+        image_encoding=image_encoding,
+        default_max_train_context=0,
+        target_standardization="none" if key == "vt_resp_rate" else ("train_zscore" if task == "regression" else "none"),
+    )
+
+
+def _mt(
+    key: str,
+    display_name: str,
+    task: Task,
+    slug: str,
+    rows: int,
+    features: int,
+    classes: int | None = None,
+) -> DatasetSpec:
+    return DatasetSpec(
+        key=key,
+        display_name=display_name,
+        benchmark="multabench",
+        task=task,
+        primary_metric="roc_auc" if task == "classification" else "r2",
+        higher_is_better=True,
+        n_classes=classes,
+        expected_rows=rows,
+        expected_structured_features=features,
+        text_features=0,
+        kaggle_slug=slug,
+        image_encoding="image_file",
+        # MulTaBench's official evaluation caps training at 10,000 per fold.
+        default_max_train_context=10_000,
+        target_standardization="train_zscore" if task == "regression" else "none",
+    )
+
+
+_SPECS = [
+    # VT-Bench discriminative datasets.  The six entries with ``legacy`` can
+    # also read the exported files produced by the existing adapter scripts.
+    _vt("vt_breast_cancer", "Breast Cancer", "classification", legacy="breast", image_encoding="imagenet_normalized"),
+    _vt("vt_skin_cancer", "Skin Cancer", "classification"),
+    _vt("vt_infarction", "Infarction", "classification", legacy="infarction"),
+    _vt("vt_pneumonia", "Pneumonia", "classification", legacy="pneumonia", image_encoding="uint8"),
+    _vt("vt_los", "Length of Stay", "regression"),
+    _vt("vt_resp_rate", "Respiratory Rate", "regression", legacy="rr", image_encoding="uint8"),
+    _vt("vt_adoption", "Adoption", "classification", legacy="adoption"),
+    _vt("vt_dvm_car", "DVM-Car", "regression"),
+    _vt("vt_celeba", "CelebA", "classification"),
+    _vt("vt_pawpularity", "Pawpularity", "regression", legacy="pawpularity"),
+    _vt("vt_anime", "Anime", "regression"),
+    # MulTaBench image-tabular datasets whose Text column is exactly zero in
+    # Table 3 of the paper (8 classification + 3 regression datasets).
+    _mt("mt_cbis_ddsm", "CBIS-DDSM", "classification", "multabench-cbis-ddsm", 1_696, 8, 4),
+    _mt("mt_celeb_attractiveness", "Celeb Attractiveness", "classification", "multabench-celeb-attractiveness", 99_999, 39, 2),
+    _mt("mt_chexpert", "CheXpert", "classification", "multabench-chexpert", 46_437, 17, 3),
+    _mt("mt_glaucoma_smdg", "Glaucoma SMDG", "classification", "multabench-glaucoma-smdg", 12_449, 8, 3),
+    _mt("mt_hateful_meme", "Hateful Meme", "classification", "multabench-hateful-meme", 10_000, 20, 2),
+    _mt("mt_justin_instagram", "Justin Instagram", "classification", "multabench-justin-instagram", 10_319, 6, 5),
+    _mt("mt_mammography_cmmd", "Mammography CMMD", "classification", "multabench-mammography-cmmd", 5_202, 4, 2),
+    _mt("mt_zooscan_zooplankton", "Zooscan Plankton", "classification", "multabench-zooscan-zooplankton", 100_000, 28, 10),
+    _mt("mt_amazon_bestseller", "Amazon Bestseller", "regression", "multabench-amazon-bestseller", 3_488, 4),
+    _mt("mt_mango_mass", "Mango Mass", "regression", "multabench-mango-mass", 546, 2),
+    _mt("mt_mkphoto_bots", "MkPhoto Bots", "regression", "multabench-mkphoto-bots", 13_748, 8),
+]
+
+
+DATASET_REGISTRY = {spec.key: spec for spec in _SPECS}
+
+_ALIASES = {
+    "breast": "vt_breast_cancer",
+    "pneumonia": "vt_pneumonia",
+    "infarction": "vt_infarction",
+    "rr": "vt_resp_rate",
+    "resp_rate": "vt_resp_rate",
+    "adoption": "vt_adoption",
+    "pawpularity": "vt_pawpularity",
+}
+for _spec in _SPECS:
+    _ALIASES.setdefault(_spec.key.removeprefix("vt_").removeprefix("mt_"), _spec.key)
+
+
+def get_dataset_spec(name: str) -> DatasetSpec:
+    normalized = name.strip().lower().replace("-", "_").replace(" ", "_")
+    key = _ALIASES.get(normalized, normalized)
+    try:
+        return DATASET_REGISTRY[key]
+    except KeyError as error:
+        choices = ", ".join(sorted(DATASET_REGISTRY))
+        raise ValueError(f"Unknown dataset '{name}'. Available datasets: {choices}") from error
+
+
+def select_dataset_specs(selectors: list[str]) -> list[DatasetSpec]:
+    """Expand dataset keys and group selectors, preserving registry order."""
+    requested: set[str] = set()
+    for selector in selectors:
+        normalized = selector.strip().lower().replace("-", "_")
+        if normalized == "all":
+            requested.update(DATASET_REGISTRY)
+        elif normalized == "vtbench":
+            requested.update(spec.key for spec in _SPECS if spec.benchmark == "vtbench")
+        elif normalized in {"multabench", "multabench_text0", "multabench_image_text0"}:
+            requested.update(spec.key for spec in _SPECS if spec.benchmark == "multabench")
+        else:
+            requested.add(get_dataset_spec(selector).key)
+    return [spec for spec in _SPECS if spec.key in requested]
+
+
+def registry_rows() -> list[dict[str, object]]:
+    return [
+        {
+            "key": spec.key,
+            "benchmark": spec.benchmark,
+            "task": spec.task,
+            "display_name": spec.display_name,
+            "primary_metric": spec.primary_metric,
+            "expected_rows": spec.expected_rows,
+            "structured_features": spec.expected_structured_features,
+            "text_features": spec.text_features,
+            "automatic_download": bool(spec.kaggle_slug),
+        }
+        for spec in _SPECS
+    ]
