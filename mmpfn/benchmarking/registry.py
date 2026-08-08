@@ -41,6 +41,9 @@ def _vt(
     *,
     legacy: str | None = None,
     image_encoding: str = "zero_one",
+    n_classes: int | None = None,
+    expected_rows: int | None = None,
+    expected_structured_features: int | None = None,
 ) -> DatasetSpec:
     is_classification = task == "classification"
     return DatasetSpec(
@@ -50,6 +53,9 @@ def _vt(
         task=task,
         primary_metric="accuracy" if is_classification else "mae",
         higher_is_better=is_classification,
+        n_classes=n_classes,
+        expected_rows=expected_rows,
+        expected_structured_features=expected_structured_features,
         legacy_vtbench_name=legacy,
         image_encoding=image_encoding,
         default_max_train_context=0,
@@ -95,7 +101,15 @@ _SPECS = [
     _vt("vt_los", "Length of Stay", "regression"),
     _vt("vt_resp_rate", "Respiratory Rate", "regression", legacy="rr", image_encoding="uint8"),
     _vt("vt_adoption", "Adoption", "classification", legacy="adoption"),
-    _vt("vt_dvm_car", "DVM-Car", "regression"),
+    _vt(
+        "vt_dvm_car",
+        "DVM-Car",
+        "classification",
+        image_encoding="image_file",
+        n_classes=286,
+        expected_rows=176_414,
+        expected_structured_features=17,
+    ),
     _vt("vt_celeba", "CelebA", "classification"),
     _vt("vt_pawpularity", "Pawpularity", "regression", legacy="pawpularity"),
     _vt("vt_anime", "Anime", "regression"),
@@ -124,6 +138,7 @@ _ALIASES = {
     "rr": "vt_resp_rate",
     "resp_rate": "vt_resp_rate",
     "adoption": "vt_adoption",
+    "dvm": "vt_dvm_car",
     "pawpularity": "vt_pawpularity",
 }
 for _spec in _SPECS:
