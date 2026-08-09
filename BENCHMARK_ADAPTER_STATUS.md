@@ -12,16 +12,16 @@ Last updated: 2026-08-08.
 | Dataset | Adapter status | Experiment status | Notes |
 |---|---|---|---|
 | Breast Cancer | implemented | run completed | Public CBIS-DDSM source was converted to the legacy VT-Bench layout. |
-| Skin Cancer | not implemented | not run | Raw source still needs to be located and inspected. |
+| Skin Cancer | not implemented | not run | Not present on server 09: expected `/mnt/hdd/jiazy/skin-cancer` with `metadata.csv` and `imgs/`. |
 | Infarction | implemented | run completed | Uses the read-only UK Biobank source and user-owned prepared files. |
 | Pneumonia | implemented | run completed | Uses user-owned prepared MIMIC-CXR image inputs. |
-| Length of Stay | not implemented | not run | Raw source and intended feature split still need inspection. |
+| Length of Stay | implemented | not run | User-owned MIMIC-IV v2.2 adapter prepared 64,044 aligned image-tabular rows (train 51,782 / val 6,188 / test 6,074). Three CXR JPEGs are unavailable upstream (404) and were excluded before preprocessing. |
 | Respiratory Rate | implemented | not run | MIMIC source was prepared, but no final three-mode run has completed. |
 | Adoption | implemented | not run | Adapter exists; no final three-mode result is recorded. |
 | DVM-Car | implemented | not run | 286-way vehicle-type adapter exported and image-validated under the user-owned DVM-Car feature directory. |
-| CelebA | not implemented | not run | Raw source still needs to be located and inspected. |
+| CelebA | not implemented | not run | Not present on server 09: expected `/mnt/hdd/jiazy/CelebA` with attributes CSV and images. |
 | Pawpularity | implemented | run completed | Public Kaggle source was converted to the legacy VT-Bench layout. |
-| Anime | not implemented | not run | Raw source still needs to be located and inspected. |
+| Anime | not implemented | not run | Not present on server 09: expected `/data1/jiazy/anime` or an equivalent raw export. |
 
 ## MulTaBench (`Text=0`, image--tabular)
 

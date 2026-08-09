@@ -1,4 +1,4 @@
-"""Download the MIMIC-CXR-JPG files referenced by the prepared VT-Bench splits.
+"""Download MIMIC-CXR-JPG files referenced by VT-Bench split files or a CSV.
 
 The script deliberately downloads JPEGs only.  The original task preprocessors
 then make the 224x224 uint8 ``.npy`` files and refresh the corresponding
@@ -9,6 +9,7 @@ Authentication is read at runtime, never stored in this file:
     read -rsp 'PhysioNet Cookie: ' PHYSIONET_COOKIE; echo
     export PHYSIONET_COOKIE
     python mmpfn/download_mimic_cxr_jpg.py --tasks pneumonia rr
+    python mmpfn/download_mimic_cxr_jpg.py --csv raw/mimic/los/los_dataset_100k_enriched.csv
     unset PHYSIONET_COOKIE
 """
 
@@ -25,6 +26,7 @@ from typing import Iterable
 from urllib.parse import quote
 
 import requests
+import pandas as pd
 import torch
 from PIL import Image, ImageFile
 from tqdm import tqdm
@@ -85,6 +87,16 @@ def collect_paths(tasks: Iterable[str]) -> set[Path]:
     return paths
 
 
+def collect_csv_paths(csv_path: Path) -> set[Path]:
+    """Read relative MIMIC-CXR JPEG paths from a user-owned candidate CSV."""
+    if not csv_path.is_file():
+        raise FileNotFoundError(f"CSV input does not exist: {csv_path}")
+    frame = pd.read_csv(csv_path, usecols=["image_path"])
+    if frame["image_path"].isna().any():
+        raise ValueError(f"CSV input has {int(frame['image_path'].isna().sum())} missing image_path values.")
+    return {normalise_relative_path(value) for value in frame["image_path"]}
+
+
 def download_one(session: requests.Session, cookie: str, relative: Path, destination: Path) -> str | None:
     """Download a JPEG atomically.  Return an error message, or None on success."""
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -117,7 +129,15 @@ def download_one(session: requests.Session, cookie: str, relative: Path, destina
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--tasks", nargs="+", choices=tuple(TASK_FEATURES), required=True)
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument(
+        "--tasks", nargs="+", choices=tuple(TASK_FEATURES),
+        help="Existing prepared task splits to inspect.",
+    )
+    source.add_argument(
+        "--csv", type=Path,
+        help="User-owned candidate CSV with an image_path column (for example LOS).",
+    )
     parser.add_argument(
         "--image-root",
         type=Path,
@@ -143,8 +163,15 @@ def main() -> None:
     if len(cookie.strip()) < 20:
         raise ValueError("The PhysioNet cookie looks empty or incomplete.")
 
-    all_paths = sorted(collect_paths(args.tasks))
-    missing = [path for path in all_paths if not jpeg_is_valid(args.image_root / path)]
+    all_paths = sorted(
+        collect_csv_paths(args.csv.expanduser().resolve())
+        if args.csv is not None
+        else collect_paths(args.tasks)
+    )
+    missing: list[Path] = []
+    for path in tqdm(all_paths, desc="Checking existing JPEGs", unit="image"):
+        if not jpeg_is_valid(args.image_root / path):
+            missing.append(path)
     if args.limit is not None:
         missing = missing[: args.limit]
     print(f"Referenced images: {len(all_paths)}; JPEGs to download: {len(missing)}")

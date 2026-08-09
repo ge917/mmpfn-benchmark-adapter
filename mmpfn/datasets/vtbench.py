@@ -54,6 +54,11 @@ _FILES = {
         "val": _SplitFiles("val_features.csv", "val_labels.pt", "val_paths.pt"),
         "test": _SplitFiles("test_features.csv", "test_labels.pt", "test_paths.pt"),
     },
+    "los": {
+        "train": _SplitFiles("train_features.csv", "train_labels.pt", "train_paths.pt"),
+        "val": _SplitFiles("val_features.csv", "val_labels.pt", "val_paths.pt"),
+        "test": _SplitFiles("test_features.csv", "test_labels.pt", "test_paths.pt"),
+    },
     "infarction": {
         "train": _SplitFiles("train_features.csv", "train_labels.pt", "train_paths.pt"),
         "val": _SplitFiles("val_features.csv", "val_labels.pt", "val_paths.pt"),
@@ -91,7 +96,7 @@ class VTBenchSplitDataset:
     def __init__(
         self,
         root: str | Path,
-        dataset: Literal["adoption", "breast", "pawpularity", "pneumonia", "rr", "infarction"],
+        dataset: Literal["adoption", "breast", "pawpularity", "pneumonia", "rr", "los", "infarction"],
         split: SplitName,
         image_encoding: ImageEncoding,
     ) -> None:
@@ -106,7 +111,7 @@ class VTBenchSplitDataset:
             raise ValueError(f"Unsupported VT-Bench dataset/split: {dataset}/{split}") from error
 
         self.x = pd.read_csv(self.root / files.features, header=None).to_numpy(dtype=np.float32)
-        label_dtype = np.float32 if dataset in ("pawpularity", "rr") else np.int64
+        label_dtype = np.float32 if dataset in ("pawpularity", "rr", "los") else np.int64
         self.y = np.asarray(_torch_load(self.root / files.labels), dtype=label_dtype).reshape(-1)
         self.image_paths = [Path(path) for path in _torch_load(self.root / files.paths)]
 
