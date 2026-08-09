@@ -12,7 +12,7 @@ Last updated: 2026-08-08.
 | Dataset | Adapter status | Experiment status | Notes |
 |---|---|---|---|
 | Breast Cancer | implemented | run completed | Public CBIS-DDSM source was converted to the legacy VT-Bench layout. |
-| Skin Cancer | not implemented | not run | Not present on server 09: expected `/mnt/hdd/jiazy/skin-cancer` with `metadata.csv` and `imgs/`. |
+| Skin Cancer | implemented | not run | Public PAD-UFES-20 source was downloaded into user-owned storage and exported as a stratified 6-class 80/10/10 split (1,838 / 230 / 230). |
 | Infarction | implemented | run completed | Uses the read-only UK Biobank source and user-owned prepared files. |
 | Pneumonia | implemented | run completed | Uses user-owned prepared MIMIC-CXR image inputs. |
 | Length of Stay | implemented | not run | User-owned MIMIC-IV v2.2 adapter prepared 64,044 aligned image-tabular rows (train 51,782 / val 6,188 / test 6,074). Three CXR JPEGs are unavailable upstream (404) and were excluded before preprocessing. |
@@ -46,7 +46,7 @@ has been recorded yet.
 
 ## Next adapter-only work
 
-1. Locate and inspect raw sources for Skin Cancer, Length of Stay, CelebA, and
-   Anime before adding their adapters.
+1. Locate and inspect raw sources for Skin Cancer, CelebA, and Anime before
+   adding their adapters.
 2. Do not launch a formal run until a GPU is available and the requested
    evaluation protocol is confirmed.
