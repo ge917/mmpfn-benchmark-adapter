@@ -19,7 +19,7 @@ Last updated: 2026-08-08.
 | Respiratory Rate | implemented | not run | MIMIC source was prepared, but no final three-mode run has completed. |
 | Adoption | implemented | not run | Adapter exists; no final three-mode result is recorded. |
 | DVM-Car | implemented | not run | 286-way vehicle-type adapter exported and image-validated under the user-owned DVM-Car feature directory. |
-| CelebA | not implemented | not run | Not present on server 09: expected `/mnt/hdd/jiazy/CelebA` with attributes CSV and images. |
+| CelebA | implemented | not run | Public CelebA source was downloaded into user-owned storage and exported as a stratified 80/10/10 split (162,079 / 20,260 / 20,260) for `Attractive` prediction from the other 39 attributes. |
 | Pawpularity | implemented | run completed | Public Kaggle source was converted to the legacy VT-Bench layout. |
 | Anime | not implemented | not run | Not present on server 09: expected `/data1/jiazy/anime` or an equivalent raw export. |
 
@@ -46,7 +46,6 @@ has been recorded yet.
 
 ## Next adapter-only work
 
-1. Locate and inspect raw sources for Skin Cancer, CelebA, and Anime before
-   adding their adapters.
+1. Locate and inspect a raw Anime source before adding its adapter.
 2. Do not launch a formal run until a GPU is available and the requested
    evaluation protocol is confirmed.

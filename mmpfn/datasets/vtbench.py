@@ -69,6 +69,11 @@ _FILES = {
         "val": _SplitFiles("val_features.csv", "val_labels.pt", "val_paths.pt"),
         "test": _SplitFiles("test_features.csv", "test_labels.pt", "test_paths.pt"),
     },
+    "celeba": {
+        "train": _SplitFiles("train_features.csv", "train_labels.pt", "train_paths.pt"),
+        "val": _SplitFiles("val_features.csv", "val_labels.pt", "val_paths.pt"),
+        "test": _SplitFiles("test_features.csv", "test_labels.pt", "test_paths.pt"),
+    },
 }
 
 
@@ -101,7 +106,7 @@ class VTBenchSplitDataset:
     def __init__(
         self,
         root: str | Path,
-        dataset: Literal["adoption", "breast", "pawpularity", "pneumonia", "rr", "los", "infarction", "skin_cancer"],
+        dataset: Literal["adoption", "breast", "pawpularity", "pneumonia", "rr", "los", "infarction", "skin_cancer", "celeba"],
         split: SplitName,
         image_encoding: ImageEncoding,
     ) -> None:
