@@ -21,7 +21,7 @@ Last updated: 2026-08-08.
 | DVM-Car | implemented | not run | 286-way vehicle-type adapter exported and image-validated under the user-owned DVM-Car feature directory. |
 | CelebA | implemented | not run | Public CelebA source was downloaded into user-owned storage and exported as a stratified 80/10/10 split (162,079 / 20,260 / 20,260) for `Attractive` prediction from the other 39 attributes. |
 | Pawpularity | implemented | run completed | Public Kaggle source was converted to the legacy VT-Bench layout. |
-| Anime | not implemented | not run | Not present on server 09: expected `/data1/jiazy/anime` or an equivalent raw export. |
+| Anime | implemented, source not downloaded | not run | Public Kaggle source is `dbdmobile/myanimelist-dataset`; the adapter preserves VT-Bench's image-URL eligibility, feature processing and 80/10/10 random split. |
 
 ## MulTaBench (`Text=0`, image--tabular)
 
@@ -32,7 +32,6 @@ has been recorded yet.
 
 | Dataset key | Dataset | Task | Adapter status | Experiment status |
 |---|---|---|---|---|
-| `mt_cbis_ddsm` | CBIS-DDSM | classification | generic adapter | run completed (fold 0) |
 | `mt_celeb_attractiveness` | Celeb Attractiveness | classification | generic adapter | not run |
 | `mt_chexpert` | CheXpert | classification | generic adapter | not run |
 | `mt_glaucoma_smdg` | Glaucoma SMDG | classification | generic adapter | not run |
@@ -46,6 +45,6 @@ has been recorded yet.
 
 ## Next adapter-only work
 
-1. Locate and inspect a raw Anime source before adding its adapter.
+1. Download the public Anime source/images and generate its user-owned feature export.
 2. Do not launch a formal run until a GPU is available and the requested
    evaluation protocol is confirmed.

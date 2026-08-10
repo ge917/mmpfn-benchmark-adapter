@@ -95,10 +95,10 @@ _SPECS = [
     # VT-Bench discriminative datasets.  The six entries with ``legacy`` can
     # also read the exported files produced by the existing adapter scripts.
     _vt("vt_breast_cancer", "Breast Cancer", "classification", legacy="breast", image_encoding="imagenet_normalized"),
-    _vt("vt_skin_cancer", "Skin Cancer", "classification"),
+    _vt("vt_skin_cancer", "Skin Cancer", "classification", legacy="skin_cancer", image_encoding="uint8"),
     _vt("vt_infarction", "Infarction", "classification", legacy="infarction"),
     _vt("vt_pneumonia", "Pneumonia", "classification", legacy="pneumonia", image_encoding="uint8"),
-    _vt("vt_los", "Length of Stay", "regression"),
+    _vt("vt_los", "Length of Stay", "regression", legacy="los", image_encoding="uint8"),
     _vt("vt_resp_rate", "Respiratory Rate", "regression", legacy="rr", image_encoding="uint8"),
     _vt("vt_adoption", "Adoption", "classification", legacy="adoption"),
     _vt(
@@ -110,12 +110,12 @@ _SPECS = [
         expected_rows=176_414,
         expected_structured_features=17,
     ),
-    _vt("vt_celeba", "CelebA", "classification"),
+    _vt("vt_celeba", "CelebA", "classification", legacy="celeba", image_encoding="uint8"),
     _vt("vt_pawpularity", "Pawpularity", "regression", legacy="pawpularity"),
-    _vt("vt_anime", "Anime", "regression"),
+    _vt("vt_anime", "Anime", "regression", legacy="anime", image_encoding="uint8"),
     # MulTaBench image-tabular datasets whose Text column is exactly zero in
-    # Table 3 of the paper (8 classification + 3 regression datasets).
-    _mt("mt_cbis_ddsm", "CBIS-DDSM", "classification", "multabench-cbis-ddsm", 1_696, 8, 4),
+    # Table 3 of the paper.  CBIS-DDSM is intentionally excluded because it
+    # duplicates VT-Bench's Breast Cancer source dataset.
     _mt("mt_celeb_attractiveness", "Celeb Attractiveness", "classification", "multabench-celeb-attractiveness", 99_999, 39, 2),
     _mt("mt_chexpert", "CheXpert", "classification", "multabench-chexpert", 46_437, 17, 3),
     _mt("mt_glaucoma_smdg", "Glaucoma SMDG", "classification", "multabench-glaucoma-smdg", 12_449, 8, 3),
