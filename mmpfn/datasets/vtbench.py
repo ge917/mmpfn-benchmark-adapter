@@ -16,6 +16,7 @@ import pandas as pd
 import torch
 from PIL import Image
 
+from mmpfn.benchmarking.image_encoders import ImageEncoderName, extract_image_embeddings
 
 SplitName = Literal["train", "val", "test"]
 ImageEncoding = Literal["zero_one", "uint8", "imagenet_normalized"]
@@ -74,6 +75,16 @@ _FILES = {
         "val": _SplitFiles("val_features.csv", "val_labels.pt", "val_paths.pt"),
         "test": _SplitFiles("test_features.csv", "test_labels.pt", "test_paths.pt"),
     },
+    "anime": {
+        "train": _SplitFiles("train_features.csv", "train_labels.pt", "train_paths.pt"),
+        "val": _SplitFiles("val_features.csv", "val_labels.pt", "val_paths.pt"),
+        "test": _SplitFiles("test_features.csv", "test_labels.pt", "test_paths.pt"),
+    },
+    "dvm_car": {
+        "train": _SplitFiles("train_features.csv", "train_labels.pt", "train_paths.pt"),
+        "val": _SplitFiles("val_features.csv", "val_labels.pt", "val_paths.pt"),
+        "test": _SplitFiles("test_features.csv", "test_labels.pt", "test_paths.pt"),
+    },
 }
 
 
@@ -106,7 +117,7 @@ class VTBenchSplitDataset:
     def __init__(
         self,
         root: str | Path,
-        dataset: Literal["adoption", "breast", "pawpularity", "pneumonia", "rr", "los", "infarction", "skin_cancer", "celeba"],
+        dataset: Literal["adoption", "breast", "pawpularity", "pneumonia", "rr", "los", "infarction", "skin_cancer", "celeba", "anime", "dvm_car"],
         split: SplitName,
         image_encoding: ImageEncoding,
     ) -> None:
@@ -121,7 +132,7 @@ class VTBenchSplitDataset:
             raise ValueError(f"Unsupported VT-Bench dataset/split: {dataset}/{split}") from error
 
         self.x = pd.read_csv(self.root / files.features, header=None).to_numpy(dtype=np.float32)
-        label_dtype = np.float32 if dataset in ("pawpularity", "rr", "los") else np.int64
+        label_dtype = np.float32 if dataset in ("pawpularity", "rr", "los", "anime") else np.int64
         self.y = np.asarray(_torch_load(self.root / files.labels), dtype=label_dtype).reshape(-1)
         self.image_paths = [Path(path) for path in _torch_load(self.root / files.paths)]
 
@@ -192,45 +203,22 @@ class VTBenchSplitDataset:
 
     def get_embeddings(
         self,
-        dino_checkpoint: str | Path,
+        dino_checkpoint: str | Path | None,
         cache_path: str | Path,
         batch_size: int = 16,
         device: str = "cuda",
+        image_encoder: ImageEncoderName = "dino_v2",
+        image_model_id: str | None = None,
     ) -> torch.Tensor:
-        """Load or create cached DINOv2 CLS embeddings for this exact split."""
-        cache_path = Path(cache_path)
-        if cache_path.is_file():
-            self.embeddings = _torch_load(cache_path)
-            if len(self.embeddings) != len(self.x):
-                raise ValueError(f"Embedding cache does not match {self.dataset}/{self.split}: {cache_path}")
-            return self.embeddings
-
-        if not torch.cuda.is_available() and device.startswith("cuda"):
-            raise RuntimeError("DINOv2 embedding extraction requires CUDA, but no CUDA device is available.")
-
-        from mmpfn.models.dino_v2.models.vision_transformer import vit_base
-
-        encoder = vit_base(
-            patch_size=14,
-            img_size=518,
-            init_values=1.0,
-            num_register_tokens=0,
-            block_chunks=0,
+        """Load or cache one frozen visual encoder representation per row."""
+        self.embeddings = extract_image_embeddings(
+            encoder_name=image_encoder,
+            image_paths=self.image_paths,
+            load_image=self._load_image,
+            cache_path=cache_path,
+            dino_checkpoint=dino_checkpoint,
+            image_model_id=image_model_id,
+            batch_size=batch_size,
+            device=device,
         )
-        state_dict = _torch_load(Path(dino_checkpoint))
-        encoder.load_state_dict(state_dict)
-        encoder = encoder.to(device).eval()
-
-        all_embeddings = []
-        with torch.no_grad():
-            for start in range(0, len(self.image_paths), batch_size):
-                batch_paths = self.image_paths[start : start + batch_size]
-                batch_images = np.stack([self._load_image(path, image_size=336) for path in batch_paths])
-                batch = torch.from_numpy(np.moveaxis(batch_images, -1, 1)).unsqueeze(1).to(device, non_blocking=True)
-                batch = batch.flatten(0, 1)
-                features = encoder.forward_features(batch)["x_norm_clstoken"]
-                all_embeddings.append(features.reshape(-1, 1, features.shape[-1]).cpu())
-        self.embeddings = torch.cat(all_embeddings, dim=0)
-        cache_path.parent.mkdir(parents=True, exist_ok=True)
-        torch.save(self.embeddings, cache_path)
         return self.embeddings

@@ -4,7 +4,9 @@ set -euo pipefail
 # Everything created by this wrapper stays under the user-owned work root.
 WORK_ROOT="${MMPFN_WORK_ROOT:-/mnt/hdd/zhangyg/projects/tab}"
 GPU_ID="${MMPFN_GPU:-1}"
-PYTHON_BIN="${MMPFN_PYTHON:-/home/debian/miniconda/envs/tabopen/bin/python}"
+# By default use the active environment.  A shared-server user can set
+# MMPFN_PYTHON to their own environment without editing this tracked script.
+PYTHON_BIN="${MMPFN_PYTHON:-python}"
 
 cd "${WORK_ROOT}/MultiModalPFN-main"
 

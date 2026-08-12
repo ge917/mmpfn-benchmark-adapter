@@ -10,6 +10,7 @@ import numpy as np
 import torch
 from PIL import Image, ImageOps
 
+from mmpfn.benchmarking.image_encoders import ImageEncoderName, extract_image_embeddings
 from mmpfn.benchmarking.registry import DatasetSpec
 from mmpfn.datasets.vtbench import VTBenchSplitDataset, _torch_load
 
@@ -33,30 +34,34 @@ class PreparedBenchmarkSplit:
             self.x = np.asarray(payload["x"], dtype=np.float32)
             label_dtype = np.int64 if spec.task == "classification" else np.float32
             self.y = np.asarray(payload["y"], dtype=label_dtype).reshape(-1)
-            raw_paths = np.asarray(payload["image_paths"]).astype(str).tolist()
+            if spec.secondary_modality == "image":
+                raw_paths = np.asarray(payload["image_paths"]).astype(str).tolist()
+                raw_texts: list[str] = []
+            else:
+                raw_paths = []
+                raw_texts = np.asarray(payload["texts"]).astype(str).tolist()
 
         image_base = Path(self.metadata.get("image_base_dir", self.root)).expanduser()
         if not image_base.is_absolute():
             image_base = (self.root / image_base).resolve()
-        self.image_paths = [
-            Path(path) if Path(path).is_absolute() else (image_base / path).resolve()
-            for path in raw_paths
-        ]
+        self.image_paths = [Path(path) if Path(path).is_absolute() else (image_base / path).resolve() for path in raw_paths]
+        self.texts = raw_texts
         self.image_encoding = self.metadata.get("image_encoding", spec.image_encoding)
         self.categorical_features = [int(index) for index in self.metadata.get("categorical_indices", [])]
         self.field_lengths = self.metadata.get("field_lengths")
         self.embeddings: torch.Tensor | None = None
 
-        if len(self.x) != len(self.y) or len(self.x) != len(self.image_paths):
+        secondary_count = len(self.image_paths) if spec.secondary_modality == "image" else len(self.texts)
+        if len(self.x) != len(self.y) or len(self.x) != secondary_count:
             raise ValueError(
-                f"Misaligned {spec.key}/{split}: x={len(self.x)}, y={len(self.y)}, "
-                f"images={len(self.image_paths)}"
+                f"Misaligned {spec.key}/{split}: x={len(self.x)}, y={len(self.y)}, secondary={secondary_count}"
             )
-        missing = [path for path in self.image_paths if not path.is_file()]
-        if missing:
-            raise FileNotFoundError(
-                f"{spec.key}/{split} references {len(missing)} missing images; first: {missing[0]}"
-            )
+        if spec.secondary_modality == "image":
+            missing = [path for path in self.image_paths if not path.is_file()]
+            if missing:
+                raise FileNotFoundError(
+                    f"{spec.key}/{split} references {len(missing)} missing images; first: {missing[0]}"
+                )
 
     def _load_image(self, path: Path, image_size: int) -> np.ndarray:
         if path.suffix.lower() == ".npy":
@@ -90,40 +95,51 @@ class PreparedBenchmarkSplit:
 
     def get_embeddings(
         self,
-        dino_checkpoint: str | Path,
+        dino_checkpoint: str | Path | None,
         cache_path: str | Path,
         batch_size: int = 16,
         device: str = "cuda",
+        image_encoder: ImageEncoderName = "dino_v2",
+        image_model_id: str | None = None,
     ) -> torch.Tensor:
-        cache_path = Path(cache_path)
-        if cache_path.is_file():
-            self.embeddings = _torch_load(cache_path)
-            if len(self.embeddings) != len(self.x):
-                raise ValueError(f"Embedding cache does not match {self.dataset}/{self.split}: {cache_path}")
+        if self.spec.secondary_modality == "text":
+            self.embeddings = self._get_text_embeddings(Path(cache_path), batch_size, device)
             return self.embeddings
-        if device.startswith("cuda") and not torch.cuda.is_available():
-            raise RuntimeError("DINOv2 embedding extraction requires an available CUDA device.")
-
-        from mmpfn.models.dino_v2.models.vision_transformer import vit_base
-
-        encoder = vit_base(
-            patch_size=14,
-            img_size=518,
-            init_values=1.0,
-            num_register_tokens=0,
-            block_chunks=0,
+        self.embeddings = extract_image_embeddings(
+            encoder_name=image_encoder,
+            image_paths=self.image_paths,
+            load_image=self._load_image,
+            cache_path=cache_path,
+            dino_checkpoint=dino_checkpoint,
+            image_model_id=image_model_id,
+            batch_size=batch_size,
+            device=device,
         )
-        encoder.load_state_dict(_torch_load(Path(dino_checkpoint)))
-        encoder = encoder.to(device).eval()
+        return self.embeddings
+
+    def _get_text_embeddings(self, cache_path: Path, batch_size: int, device: str) -> torch.Tensor:
+        """Embed the original MMPFN paper text input with its Electra encoder."""
+        model_id = self.metadata.get("text_model_id") or self.spec.text_model_id
+        if not model_id:
+            raise ValueError(f"No text encoder configured for {self.dataset}.")
+        from transformers import AutoModel, AutoTokenizer
+
+        tokenizer = AutoTokenizer.from_pretrained(model_id)
+        encoder = AutoModel.from_pretrained(model_id).to(device).eval()
         outputs = []
         with torch.no_grad():
-            for start in range(0, len(self.image_paths), batch_size):
-                paths = self.image_paths[start : start + batch_size]
-                images = np.stack([self._load_image(path, 336) for path in paths])
-                batch = torch.from_numpy(np.moveaxis(images, -1, 1)).unsqueeze(1)
-                batch = batch.flatten(0, 1).to(device, non_blocking=True)
-                features = encoder.forward_features(batch)["x_norm_clstoken"]
-                outputs.append(features.reshape(-1, 1, features.shape[-1]).cpu())
+            for start in range(0, len(self.texts), batch_size):
+                batch_text = self.texts[start : start + batch_size]
+                tokens = tokenizer(
+                    batch_text,
+                    return_tensors="pt",
+                    padding=True,
+                    truncation=True,
+                    max_length=512,
+                )
+                tokens = {name: value.to(device, non_blocking=True) for name, value in tokens.items()}
+                features = encoder(**tokens).last_hidden_state[:, 0, :]
+                outputs.append(features.unsqueeze(1).cpu())
         self.embeddings = torch.cat(outputs, dim=0)
         cache_path.parent.mkdir(parents=True, exist_ok=True)
         torch.save(self.embeddings, cache_path)

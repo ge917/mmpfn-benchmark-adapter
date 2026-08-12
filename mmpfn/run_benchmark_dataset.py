@@ -20,6 +20,7 @@ from sklearn.metrics import (
 )
 
 from mmpfn.benchmarking.data import load_benchmark_splits
+from mmpfn.benchmarking.image_encoders import IMAGE_ENCODERS, project_for_mmpfn
 from mmpfn.benchmarking.registry import get_dataset_spec
 from mmpfn.models.mmpfn import MMPFNClassifier, MMPFNRegressor
 from mmpfn.models.mmpfn.constants import ModelInterfaceConfig
@@ -43,9 +44,29 @@ PACKAGE_ROOT = Path(__file__).resolve().parent
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dataset", required=True)
-    parser.add_argument("--mode", choices=("full", "image_only", "tabular_only"), default="full")
+    parser.add_argument(
+        "--mode",
+        choices=("full", "image_only", "text_only", "tabular_only"),
+        default="full",
+    )
     parser.add_argument("--data-root", type=Path, required=True, help="One prepared fold or legacy VT export")
-    parser.add_argument("--dino-checkpoint", type=Path, required=True)
+    parser.add_argument(
+        "--dino-checkpoint",
+        type=Path,
+        default=None,
+        help="Local DINOv2-B checkpoint; required only with --image-encoder dino_v2.",
+    )
+    parser.add_argument(
+        "--image-encoder",
+        choices=IMAGE_ENCODERS,
+        default="dino_v2",
+        help="Frozen image encoder for image-tabular datasets.",
+    )
+    parser.add_argument(
+        "--image-model-id",
+        default=None,
+        help="Optional Hugging Face model id overriding the DINOv3/CLIP default.",
+    )
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--fold", type=int, default=0)
     parser.add_argument("--seed", type=int, default=42)
@@ -95,10 +116,22 @@ def _classification_metrics(y_true: np.ndarray, labels: np.ndarray, probabilitie
 def main() -> None:
     args = _parse_args()
     spec = get_dataset_spec(args.dataset)
+    secondary_only_mode = f"{spec.secondary_modality}_only"
+    allowed_modes = {"full", secondary_only_mode, "tabular_only"}
+    if args.mode not in allowed_modes:
+        raise ValueError(
+            f"{spec.key} has {spec.secondary_modality} inputs, so supported modes are "
+            f"{', '.join(sorted(allowed_modes))}; got {args.mode}."
+        )
     if args.device == "cuda" and not torch.cuda.is_available():
         raise RuntimeError("--device cuda was requested but CUDA is unavailable.")
-    if args.mode != "tabular_only" and not args.dino_checkpoint.is_file():
-        raise FileNotFoundError(f"DINOv2 checkpoint not found: {args.dino_checkpoint}")
+    if (
+        spec.secondary_modality == "image"
+        and args.mode != "tabular_only"
+        and args.image_encoder == "dino_v2"
+        and (args.dino_checkpoint is None or not args.dino_checkpoint.is_file())
+    ):
+        raise FileNotFoundError("--image-encoder dino_v2 requires a valid --dino-checkpoint.")
 
     os.chdir(PACKAGE_ROOT)
     torch.manual_seed(args.seed)
@@ -123,21 +156,41 @@ def main() -> None:
         / f"seed_{args.seed}"
         / "embeddings"
     )
-    use_tabular = args.mode != "image_only"
-    use_images = args.mode != "tabular_only"
-    embeddings = (
-        {
-            split: dataset.get_embeddings(
-                args.dino_checkpoint,
-                embedding_root / f"{split}_dinov2_vitb14.pt",
-                args.embedding_batch_size,
-                args.device,
+    use_tabular = args.mode != secondary_only_mode
+    use_secondary = args.mode != "tabular_only"
+    if use_secondary:
+        if spec.secondary_modality == "image":
+            raw_embeddings = {
+                split: dataset.get_embeddings(
+                    args.dino_checkpoint,
+                    embedding_root / f"{split}_{args.image_encoder}_raw.pt",
+                    args.embedding_batch_size,
+                    args.device,
+                    image_encoder=args.image_encoder,
+                    image_model_id=args.image_model_id,
+                )
+                for split, dataset in splits.items()
+            }
+            # MMPFN's mixer was pretrained for 768-dimensional visual tokens.
+            # DINOv2/DINOv3/CLIP-L/ViT-B are identities; ResNet-50 is PCA
+            # reduced using the training split only.
+            embeddings = project_for_mmpfn(
+                raw_embeddings,
+                embedding_root / f"{args.image_encoder}_to_768.pt",
+                seed=args.seed,
             )
-            for split, dataset in splits.items()
-        }
-        if use_images
-        else {split: None for split in splits}
-    )
+        else:
+            embeddings = {
+                split: dataset.get_embeddings(
+                    args.dino_checkpoint,
+                    embedding_root / f"{split}_{spec.secondary_modality}_embeddings.pt",
+                    args.embedding_batch_size,
+                    args.device,
+                )
+                for split, dataset in splits.items()
+            }
+    else:
+        embeddings = {split: None for split in splits}
     categorical = (
         args.categorical_indices
         if args.categorical_indices is not None
@@ -210,6 +263,9 @@ def main() -> None:
         "max_val_context": args.max_val_context,
         "validation_chunk_size": args.validation_chunk_size or None,
         "target_standardization": target_standardization,
+        "secondary_modality": spec.secondary_modality,
+        "image_encoder": args.image_encoder if spec.secondary_modality == "image" and use_secondary else None,
+        "image_model_id": args.image_model_id if spec.secondary_modality == "image" and use_secondary else None,
     }
     (run_root / "run_config.json").write_text(json.dumps(run_config, indent=2), encoding="utf-8")
 
@@ -233,10 +289,10 @@ def main() -> None:
         task_type=task_type,
         device=SupportedDevice(args.device),
         X_train=pd.DataFrame(x_train) if use_tabular else None,
-        image_train=image_train if use_images else None,
+        image_train=image_train if use_secondary else None,
         y_train=y_train_tuned,
         X_val=pd.DataFrame(x_val) if use_tabular else None,
-        image_val=image_val if use_images else None,
+        image_val=image_val if use_secondary else None,
         y_val=y_val_tuned,
         validation_chunk_size=args.validation_chunk_size or None,
         save_all_checkpoints_dir=run_root / "all_checkpoints" if args.save_all_checkpoints else None,
@@ -262,9 +318,9 @@ def main() -> None:
         random_state=args.seed,
     )
     fit_x = pd.DataFrame(x_train) if use_tabular else None
-    fit_image = image_train if use_images else None
+    fit_image = image_train if use_secondary else None
     test_x = splits["test"].x if use_tabular else None
-    test_image = embeddings["test"] if use_images else None
+    test_image = embeddings["test"] if use_secondary else None
     if spec.task == "classification":
         model = MMPFNClassifier(**common_model_args).fit(fit_x, fit_image, pd.Series(y_train))
         probabilities = predict_proba_in_chunks(

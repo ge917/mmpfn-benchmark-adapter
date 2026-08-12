@@ -43,8 +43,28 @@ has been recorded yet.
 | `mt_mango_mass` | Mango Mass | regression | generic adapter | run completed (fold 0) |
 | `mt_mkphoto_bots` | MkPhoto Bots | regression | generic adapter | not run |
 
+## Original MMPFN text--tabular datasets
+
+| Dataset | Adapter status | Experiment status | Notes |
+|---|---|---|---|
+| Airbnb | implemented, source required | not run | Uses the original MMPFN field selection and text concatenation; source location is supplied explicitly. |
+| Salary | implemented, source required | not run | Uses the original MMPFN field selection and text concatenation; source location is supplied explicitly. |
+| Cloth | implemented, source required | not run | Uses the original MMPFN field selection and text concatenation; source location is supplied explicitly. |
+
+The original-paper PetFinder-I, PetFinder-t and PetFinder-A tasks are
+intentionally **not** added in this adapter extension.
+
+## Encoder comparison interface
+
+The image encoder probe and MMPFN runner support frozen DINOv2-B, DINOv3-B,
+CLIP ViT-L/14, ResNet-50 and supervised ViT-B/16.  MMPFN retains its released
+TabPFN-v2 backbone; `mmpfn.run_tabpfn_v3` is a separate TabPFN-3 tabular-only
+baseline.  The visual adapters are implemented but no formal multi-encoder
+comparison has been completed yet.
+
 ## Next adapter-only work
 
 1. Download the public Anime source/images and generate its user-owned feature export.
-2. Do not launch a formal run until a GPU is available and the requested
+2. Obtain the original source folders for Airbnb, Salary and Cloth before preparing them.
+3. Do not launch a formal run until a GPU is available and the requested
    evaluation protocol is confirmed.

@@ -12,7 +12,8 @@ from typing import Literal
 
 
 Task = Literal["classification", "regression"]
-Benchmark = Literal["vtbench", "multabench"]
+Benchmark = Literal["vtbench", "multabench", "mmpfn_paper"]
+SecondaryModality = Literal["image", "text"]
 
 
 @dataclass(frozen=True)
@@ -27,8 +28,15 @@ class DatasetSpec:
     expected_rows: int | None = None
     expected_structured_features: int | None = None
     text_features: int = 0
+    secondary_modality: SecondaryModality = "image"
+    text_model_id: str | None = None
     kaggle_slug: str | None = None
+    preparer_module: str | None = None
     legacy_vtbench_name: str | None = None
+    # Relative to the benchmark work root (the parent of ``benchmark_data``).
+    # This lets the one-command runner reuse a user-owned VT-Bench export
+    # without hard-coding a machine-specific absolute path.
+    legacy_data_relative_path: str | None = None
     image_encoding: str = "image_file"
     default_max_train_context: int = 0
     target_standardization: str = "none"
@@ -44,6 +52,7 @@ def _vt(
     n_classes: int | None = None,
     expected_rows: int | None = None,
     expected_structured_features: int | None = None,
+    legacy_data_relative_path: str | None = None,
 ) -> DatasetSpec:
     is_classification = task == "classification"
     return DatasetSpec(
@@ -57,6 +66,7 @@ def _vt(
         expected_rows=expected_rows,
         expected_structured_features=expected_structured_features,
         legacy_vtbench_name=legacy,
+        legacy_data_relative_path=legacy_data_relative_path,
         image_encoding=image_encoding,
         default_max_train_context=0,
         target_standardization="none" if key == "vt_resp_rate" else ("train_zscore" if task == "regression" else "none"),
@@ -91,16 +101,47 @@ def _mt(
     )
 
 
+def _paper_text(
+    key: str,
+    display_name: str,
+    *,
+    n_classes: int | None = None,
+) -> DatasetSpec:
+    """Original MMPFN paper datasets with tabular and free-text inputs."""
+    return DatasetSpec(
+        key=key,
+        display_name=display_name,
+        benchmark="mmpfn_paper",
+        task="classification",
+        primary_metric="accuracy",
+        higher_is_better=True,
+        n_classes=n_classes,
+        secondary_modality="text",
+        text_model_id="google/electra-base-discriminator",
+        preparer_module="mmpfn.prepare_mmpfn_text_benchmarks",
+        default_max_train_context=10_000,
+    )
+
+
 _SPECS = [
     # VT-Bench discriminative datasets.  The six entries with ``legacy`` can
     # also read the exported files produced by the existing adapter scripts.
-    _vt("vt_breast_cancer", "Breast Cancer", "classification", legacy="breast", image_encoding="imagenet_normalized"),
-    _vt("vt_skin_cancer", "Skin Cancer", "classification", legacy="skin_cancer", image_encoding="uint8"),
-    _vt("vt_infarction", "Infarction", "classification", legacy="infarction"),
-    _vt("vt_pneumonia", "Pneumonia", "classification", legacy="pneumonia", image_encoding="uint8"),
-    _vt("vt_los", "Length of Stay", "regression", legacy="los", image_encoding="uint8"),
-    _vt("vt_resp_rate", "Respiratory Rate", "regression", legacy="rr", image_encoding="uint8"),
-    _vt("vt_adoption", "Adoption", "classification", legacy="adoption"),
+    _vt("vt_breast_cancer", "Breast Cancer", "classification", legacy="breast", image_encoding="imagenet_normalized", legacy_data_relative_path="raw/breast/features"),
+    _vt(
+        "vt_skin_cancer",
+        "Skin Cancer",
+        "classification",
+        legacy="skin_cancer",
+        image_encoding="uint8",
+        # Produced by mmpfn.prepare_skin_cancer_vtbench.  The suite derives
+        # the absolute path from --data-root, so it remains portable.
+        legacy_data_relative_path="raw/skin_cancer/features",
+    ),
+    _vt("vt_infarction", "Infarction", "classification", legacy="infarction", legacy_data_relative_path="raw/infarction/features"),
+    _vt("vt_pneumonia", "Pneumonia", "classification", legacy="pneumonia", image_encoding="uint8", legacy_data_relative_path="raw/mimic/pneumonia/features"),
+    _vt("vt_los", "Length of Stay", "regression", legacy="los", image_encoding="uint8", legacy_data_relative_path="raw/mimic/los/features"),
+    _vt("vt_resp_rate", "Respiratory Rate", "regression", legacy="rr", image_encoding="uint8", legacy_data_relative_path="raw/mimic/rr/features"),
+    _vt("vt_adoption", "Adoption", "classification", legacy="adoption", legacy_data_relative_path="raw/adoption/features"),
     _vt(
         "vt_dvm_car",
         "DVM-Car",
@@ -109,10 +150,12 @@ _SPECS = [
         n_classes=286,
         expected_rows=176_414,
         expected_structured_features=17,
+        legacy="dvm_car",
+        legacy_data_relative_path="raw/dvm_car/features",
     ),
-    _vt("vt_celeba", "CelebA", "classification", legacy="celeba", image_encoding="uint8"),
-    _vt("vt_pawpularity", "Pawpularity", "regression", legacy="pawpularity"),
-    _vt("vt_anime", "Anime", "regression", legacy="anime", image_encoding="uint8"),
+    _vt("vt_celeba", "CelebA", "classification", legacy="celeba", image_encoding="uint8", legacy_data_relative_path="raw/celeba/features"),
+    _vt("vt_pawpularity", "Pawpularity", "regression", legacy="pawpularity", legacy_data_relative_path="raw/pawpularity/features"),
+    _vt("vt_anime", "Anime", "regression", legacy="anime", image_encoding="uint8", legacy_data_relative_path="raw/anime/features"),
     # MulTaBench image-tabular datasets whose Text column is exactly zero in
     # Table 3 of the paper.  CBIS-DDSM is intentionally excluded because it
     # duplicates VT-Bench's Breast Cancer source dataset.
@@ -126,6 +169,12 @@ _SPECS = [
     _mt("mt_amazon_bestseller", "Amazon Bestseller", "regression", "multabench-amazon-bestseller", 3_488, 4),
     _mt("mt_mango_mass", "Mango Mass", "regression", "multabench-mango-mass", 546, 2),
     _mt("mt_mkphoto_bots", "MkPhoto Bots", "regression", "multabench-mkphoto-bots", 13_748, 8),
+    # Text-tabular datasets used in the original MMPFN paper.  Their source
+    # files are supplied explicitly to the preparer; no data are downloaded
+    # automatically by the benchmark runner.
+    _paper_text("mmpfn_airbnb", "Airbnb", n_classes=10),
+    _paper_text("mmpfn_salary", "Salary"),
+    _paper_text("mmpfn_cloth", "Cloth", n_classes=5),
 ]
 
 
@@ -140,6 +189,9 @@ _ALIASES = {
     "adoption": "vt_adoption",
     "dvm": "vt_dvm_car",
     "pawpularity": "vt_pawpularity",
+    "airbnb": "mmpfn_airbnb",
+    "salary": "mmpfn_salary",
+    "cloth": "mmpfn_cloth",
 }
 for _spec in _SPECS:
     _ALIASES.setdefault(_spec.key.removeprefix("vt_").removeprefix("mt_"), _spec.key)
@@ -166,6 +218,8 @@ def select_dataset_specs(selectors: list[str]) -> list[DatasetSpec]:
             requested.update(spec.key for spec in _SPECS if spec.benchmark == "vtbench")
         elif normalized in {"multabench", "multabench_text0", "multabench_image_text0"}:
             requested.update(spec.key for spec in _SPECS if spec.benchmark == "multabench")
+        elif normalized in {"mmpfn_paper", "paper_text", "mmpfn_text"}:
+            requested.update(spec.key for spec in _SPECS if spec.benchmark == "mmpfn_paper")
         else:
             requested.add(get_dataset_spec(selector).key)
     return [spec for spec in _SPECS if spec.key in requested]
@@ -182,6 +236,7 @@ def registry_rows() -> list[dict[str, object]]:
             "expected_rows": spec.expected_rows,
             "structured_features": spec.expected_structured_features,
             "text_features": spec.text_features,
+            "secondary_modality": spec.secondary_modality,
             "automatic_download": bool(spec.kaggle_slug),
         }
         for spec in _SPECS

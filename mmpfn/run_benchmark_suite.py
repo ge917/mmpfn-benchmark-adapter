@@ -31,6 +31,26 @@ def _mapping(values: Iterable[str]) -> dict[str, Path]:
     return output
 
 
+def _default_dataset_root(spec, data_root: Path, fold: int) -> Path:
+    """Return the prepared location for a registered dataset.
+
+    MulTaBench datasets live under ``benchmark_data``.  Some VT-Bench
+    adapters already export their compatible files below the user-owned
+    ``raw`` directory; when such an export is registered and present, prefer
+    it so ``--datasets vt_skin_cancer`` is genuinely one-command.
+    """
+    if spec.benchmark == "multabench":
+        return data_root / "multabench" / spec.key / f"fold_{fold}"
+    if spec.benchmark == "mmpfn_paper":
+        return data_root / "mmpfn_paper" / spec.key / f"fold_{fold}"
+
+    if spec.legacy_data_relative_path:
+        legacy_root = data_root.parent / spec.legacy_data_relative_path
+        if legacy_root.is_dir():
+            return legacy_root
+    return data_root / "vtbench" / spec.key / f"fold_{fold}"
+
+
 def _print_registry() -> None:
     rows = registry_rows()
     headers = ("key", "benchmark", "task", "display_name", "primary_metric", "automatic_download")
@@ -71,13 +91,25 @@ def _run_logged(command: list[str], log_path: Path, env: dict[str, str], *, dry_
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--datasets", nargs="+", default=["multabench_text0"])
-    parser.add_argument("--modes", nargs="+", choices=("full", "image_only", "tabular_only"), default=["full", "image_only", "tabular_only"])
+    parser.add_argument(
+        "--modes",
+        nargs="+",
+        choices=("full", "image_only", "text_only", "tabular_only"),
+        default=None,
+        help="Omit to run full, the dataset's single-secondary-modality mode, and tabular_only.",
+    )
     parser.add_argument("--folds", nargs="+", type=int, default=[0])
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--gpu", default="1", help="Physical GPU id exposed to each child process.")
     parser.add_argument("--data-root", type=Path, default=DEFAULT_BASE / "benchmark_data")
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_BASE / "results" / "mmpfn_benchmark_suite")
     parser.add_argument("--dino-checkpoint", type=Path, default=DEFAULT_BASE / "models" / "dinov2_vitb14_pretrain.pth")
+    parser.add_argument(
+        "--image-encoder",
+        choices=("dino_v2", "dino_v3", "clip_vitl14", "resnet50", "vit_b16"),
+        default="dino_v2",
+    )
+    parser.add_argument("--image-model-id", default=None)
     parser.add_argument("--dataset-root", action="append", default=[], metavar="DATASET=PATH")
     parser.add_argument("--source-root", action="append", default=[], metavar="DATASET=PATH")
     parser.add_argument("--download-multabench", action="store_true")
@@ -129,15 +161,14 @@ def main() -> None:
         for fold in args.folds:
             if spec.key in overrides:
                 dataset_root = overrides[spec.key]
-            elif spec.benchmark == "multabench":
-                dataset_root = data_root / "multabench" / spec.key / f"fold_{fold}"
             else:
-                dataset_root = data_root / "vtbench" / spec.key / f"fold_{fold}"
+                dataset_root = _default_dataset_root(spec, data_root, fold)
 
             prepared = (dataset_root / "metadata.json").is_file() and (dataset_root / "train.npz").is_file()
             legacy_available = spec.legacy_vtbench_name is not None and dataset_root.is_dir()
-            if spec.benchmark == "multabench" and (args.force or not prepared):
-                if not args.download_multabench and spec.key not in source_roots:
+            should_prepare = (spec.benchmark == "multabench" or spec.preparer_module is not None) and (args.force or not prepared)
+            if should_prepare:
+                if spec.benchmark == "multabench" and not args.download_multabench and spec.key not in source_roots:
                     message = (
                         f"{spec.key} is not prepared at {dataset_root}. Add --download-multabench "
                         "or --source-root DATASET=/path/to/official/release."
@@ -147,20 +178,33 @@ def main() -> None:
                     if args.fail_fast:
                         raise RuntimeError(message)
                     continue
-                prepare_command = [
-                    sys.executable,
-                    "-u",
-                    "-m",
-                    "mmpfn.prepare_multabench",
-                    "--datasets",
-                    spec.key,
-                    "--data-root",
-                    str(data_root / "multabench"),
-                    "--folds",
-                    str(fold),
-                ]
-                if spec.key in source_roots:
-                    prepare_command += ["--source-root", f"{spec.key}={source_roots[spec.key]}"]
+                if spec.benchmark == "multabench":
+                    prepare_command = [
+                        sys.executable, "-u", "-m", "mmpfn.prepare_multabench",
+                        "--datasets", spec.key,
+                        "--data-root", str(data_root / "multabench"),
+                        "--folds", str(fold),
+                    ]
+                    if spec.key in source_roots:
+                        prepare_command += ["--source-root", f"{spec.key}={source_roots[spec.key]}"]
+                else:
+                    if spec.key not in source_roots:
+                        message = (
+                            f"{spec.key} needs its original source directory. Add "
+                            f"--source-root {spec.key}=/path/to/source."
+                        )
+                        print(f"ERROR: {message}")
+                        failures.append({"dataset": spec.key, "fold": fold, "stage": "prepare", "error": message})
+                        if args.fail_fast:
+                            raise RuntimeError(message)
+                        continue
+                    prepare_command = [
+                        sys.executable, "-u", "-m", spec.preparer_module,
+                        "--datasets", spec.key,
+                        "--data-root", str(data_root / "mmpfn_paper"),
+                        "--source-root", f"{spec.key}={source_roots[spec.key]}",
+                        "--folds", str(fold),
+                    ]
                 if args.force:
                     prepare_command.append("--force")
                 code = _run_logged(
@@ -182,7 +226,17 @@ def main() -> None:
                     raise RuntimeError(message)
                 continue
 
-            for mode in args.modes:
+            modes = args.modes or ["full", f"{spec.secondary_modality}_only", "tabular_only"]
+            allowed_modes = {"full", f"{spec.secondary_modality}_only", "tabular_only"}
+            invalid_modes = [mode for mode in modes if mode not in allowed_modes]
+            if invalid_modes:
+                message = f"{spec.key} does not support modes: {invalid_modes}; supported: {sorted(allowed_modes)}"
+                print(f"ERROR: {message}")
+                failures.append({"dataset": spec.key, "fold": fold, "stage": "mode", "error": message})
+                if args.fail_fast:
+                    raise RuntimeError(message)
+                continue
+            for mode in modes:
                 metrics_path = output_root / spec.key / f"fold_{fold}" / mode / f"seed_{args.seed}" / "metrics.json"
                 if metrics_path.is_file() and not args.force:
                     print(f"SKIP completed: {spec.key} fold={fold} mode={mode}")
@@ -200,6 +254,8 @@ def main() -> None:
                     str(dataset_root),
                     "--dino-checkpoint",
                     str(args.dino_checkpoint.expanduser().resolve()),
+                    "--image-encoder",
+                    args.image_encoder,
                     "--output-dir",
                     str(output_root),
                     "--fold",
@@ -219,6 +275,8 @@ def main() -> None:
                     "--time-limit",
                     str(args.time_limit),
                 ]
+                if args.image_model_id:
+                    command += ["--image-model-id", args.image_model_id]
                 if args.max_train_context is not None:
                     command += ["--max-train-context", str(args.max_train_context)]
                 if args.save_all_checkpoints:
