@@ -20,6 +20,7 @@ from sklearn.decomposition import PCA
 
 
 ImageEncoderName = Literal["dino_v2", "dino_v3", "clip_vitl14", "resnet50", "vit_b16"]
+ImagePathEntry = Path | Sequence[Path]
 IMAGE_ENCODERS: tuple[ImageEncoderName, ...] = (
     "dino_v2",
     "dino_v3",
@@ -158,7 +159,7 @@ def _extract_torchvision(
 def extract_image_embeddings(
     *,
     encoder_name: ImageEncoderName,
-    image_paths: Sequence[Path],
+    image_paths: Sequence[ImagePathEntry],
     load_image: Callable[[Path, int], np.ndarray],
     cache_path: str | Path,
     dino_checkpoint: str | Path | None,
@@ -166,31 +167,41 @@ def extract_image_embeddings(
     batch_size: int = 16,
     device: str = "cuda",
 ) -> torch.Tensor:
-    """Return frozen encoder features with shape ``[n_examples, 1, dim]``."""
+    """Return frozen encoder features with shape ``[n_examples, n_views, dim]``."""
     cache_path = Path(cache_path)
+    path_sets = [
+        (entry,) if isinstance(entry, Path) else tuple(entry)
+        for entry in image_paths
+    ]
+    if not path_sets:
+        raise ValueError("Cannot extract image embeddings from an empty split.")
+    n_views = len(path_sets[0])
+    if n_views == 0 or any(len(paths) != n_views for paths in path_sets):
+        raise ValueError("Every example must provide the same positive number of image views.")
+    flat_paths = [path for paths in path_sets for path in paths]
     if cache_path.is_file():
         embeddings = _torch_load(cache_path)
-        if len(embeddings) != len(image_paths):
-            raise ValueError(f"Embedding cache does not match {cache_path}: {len(embeddings)} != {len(image_paths)}")
+        if len(embeddings) != len(path_sets) or embeddings.ndim != 3 or embeddings.shape[1] != n_views:
+            raise ValueError(
+                f"Embedding cache does not match {cache_path}: got {tuple(embeddings.shape)}, "
+                f"expected ({len(path_sets)}, {n_views}, dim)."
+            )
         return embeddings.float()
     if device.startswith("cuda") and not torch.cuda.is_available():
         raise RuntimeError("Visual embedding extraction requires CUDA, but CUDA is unavailable.")
-    if not image_paths:
-        raise ValueError("Cannot extract image embeddings from an empty split.")
-
     if encoder_name == "dino_v2":
         if dino_checkpoint is None or not Path(dino_checkpoint).is_file():
             raise FileNotFoundError("dino_v2 requires --dino-checkpoint pointing to dinov2_vitb14_pretrain.pth.")
-        raw = _extract_dino_v2(load_image, image_paths, Path(dino_checkpoint), batch_size, device)
+        raw = _extract_dino_v2(load_image, flat_paths, Path(dino_checkpoint), batch_size, device)
     elif encoder_name in {"dino_v3", "clip_vitl14"}:
         model_id = image_model_id or DEFAULT_IMAGE_MODEL_IDS[encoder_name]
-        raw = _extract_transformers(encoder_name, load_image, image_paths, model_id, batch_size, device)
+        raw = _extract_transformers(encoder_name, load_image, flat_paths, model_id, batch_size, device)
     elif encoder_name in {"resnet50", "vit_b16"}:
-        raw = _extract_torchvision(encoder_name, load_image, image_paths, batch_size, device)
+        raw = _extract_torchvision(encoder_name, load_image, flat_paths, batch_size, device)
     else:  # defensive guard for CLI values passed programmatically
         raise ValueError(f"Unsupported image encoder: {encoder_name}")
 
-    embeddings = raw.float().unsqueeze(1)
+    embeddings = raw.float().reshape(len(path_sets), n_views, -1)
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     torch.save(embeddings, cache_path)
     return embeddings
@@ -213,8 +224,8 @@ def project_for_mmpfn(
     """
     projection_path = Path(projection_path)
     train = embeddings["train"].detach().cpu().float()
-    if train.ndim != 3 or train.shape[1] != 1:
-        raise ValueError(f"Expected [N, 1, D] embeddings, got {tuple(train.shape)}")
+    if train.ndim != 3:
+        raise ValueError(f"Expected [N, n_views, D] embeddings, got {tuple(train.shape)}")
     input_dim = int(train.shape[-1])
 
     if projection_path.is_file():
@@ -230,7 +241,7 @@ def project_for_mmpfn(
         projection_path.parent.mkdir(parents=True, exist_ok=True)
         torch.save(state, projection_path)
     else:
-        values = train[:, 0, :].numpy()
+        values = train.reshape(-1, input_dim).numpy()
         if len(values) > max_fit_rows:
             rng = np.random.default_rng(seed)
             values = values[rng.choice(len(values), size=max_fit_rows, replace=False)]
@@ -254,7 +265,10 @@ def project_for_mmpfn(
     method = state["method"]
     projected: dict[str, torch.Tensor] = {}
     for split, value in embeddings.items():
-        matrix = value.detach().cpu().float()[:, 0, :]
+        tokens = value.detach().cpu().float()
+        if tokens.ndim != 3 or tokens.shape[-1] != input_dim:
+            raise ValueError(f"Expected [N, n_views, {input_dim}] embeddings for {split}, got {tuple(tokens.shape)}")
+        matrix = tokens.reshape(-1, input_dim)
         if method == "identity":
             result = matrix
         elif method == "pad":
@@ -265,5 +279,5 @@ def project_for_mmpfn(
                 result = torch.nn.functional.pad(result, (0, output_dim - result.shape[1]))
         else:
             raise ValueError(f"Unknown projection method in {projection_path}: {method}")
-        projected[split] = result.unsqueeze(1).contiguous()
+        projected[split] = result.reshape(tokens.shape[0], tokens.shape[1], output_dim).contiguous()
     return projected

@@ -35,7 +35,7 @@ class PreparedBenchmarkSplit:
             label_dtype = np.int64 if spec.task == "classification" else np.float32
             self.y = np.asarray(payload["y"], dtype=label_dtype).reshape(-1)
             if spec.secondary_modality == "image":
-                raw_paths = np.asarray(payload["image_paths"]).astype(str).tolist()
+                raw_paths = np.asarray(payload["image_paths"]).astype(str)
                 raw_texts: list[str] = []
             else:
                 raw_paths = []
@@ -44,7 +44,21 @@ class PreparedBenchmarkSplit:
         image_base = Path(self.metadata.get("image_base_dir", self.root)).expanduser()
         if not image_base.is_absolute():
             image_base = (self.root / image_base).resolve()
-        self.image_paths = [Path(path) if Path(path).is_absolute() else (image_base / path).resolve() for path in raw_paths]
+        if spec.secondary_modality == "image":
+            if raw_paths.ndim == 1:
+                raw_path_sets = [[path] for path in raw_paths.tolist()]
+            elif raw_paths.ndim == 2:
+                raw_path_sets = raw_paths.tolist()
+            else:
+                raise ValueError(
+                    f"{spec.key}/{split} image_paths must be one or two dimensional, got {raw_paths.shape}."
+                )
+            self.image_paths = [
+                [Path(path) if Path(path).is_absolute() else (image_base / path).resolve() for path in path_set]
+                for path_set in raw_path_sets
+            ]
+        else:
+            self.image_paths = []
         self.texts = raw_texts
         self.image_encoding = self.metadata.get("image_encoding", spec.image_encoding)
         self.categorical_features = [int(index) for index in self.metadata.get("categorical_indices", [])]
@@ -57,7 +71,7 @@ class PreparedBenchmarkSplit:
                 f"Misaligned {spec.key}/{split}: x={len(self.x)}, y={len(self.y)}, secondary={secondary_count}"
             )
         if spec.secondary_modality == "image":
-            missing = [path for path in self.image_paths if not path.is_file()]
+            missing = [path for path_set in self.image_paths for path in path_set if not path.is_file()]
             if missing:
                 raise FileNotFoundError(
                     f"{spec.key}/{split} references {len(missing)} missing images; first: {missing[0]}"

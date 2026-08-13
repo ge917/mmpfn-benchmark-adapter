@@ -5,7 +5,7 @@ experiment. A dataset is only marked as `run completed` after all three modes
 (`full`, `image_only`, and `tabular_only`) have produced metrics on the target
 server. Do not treat an adapter-only entry as a reported benchmark result.
 
-Last updated: 2026-08-08.
+Last updated: 2026-08-13.
 
 ## VT-Bench
 
@@ -43,16 +43,17 @@ has been recorded yet.
 | `mt_mango_mass` | Mango Mass | regression | generic adapter | run completed (fold 0) |
 | `mt_mkphoto_bots` | MkPhoto Bots | regression | generic adapter | not run |
 
-## Original MMPFN text--tabular datasets
+## Original MMPFN image--tabular datasets
 
-| Dataset | Adapter status | Experiment status | Notes |
-|---|---|---|---|
-| Airbnb | implemented, source required | not run | Uses the original MMPFN field selection and text concatenation; source location is supplied explicitly. |
-| Salary | implemented, source required | not run | Uses the original MMPFN field selection and text concatenation; source location is supplied explicitly. |
-| Cloth | implemented, source required | not run | Uses the original MMPFN field selection and text concatenation; source location is supplied explicitly. |
+| Dataset key | Dataset | Adapter status | Experiment status | Notes |
+|---|---|---|---|---|
+| `mmpfn_cbis_ddsm_calc` | CBIS-DDSM (Calc) | implemented, source required | not run | Keeps the original five tabular categorical fields, three numerical fields and all three original image views (full image, crop, ROI mask). The official CBIS train/test partitions are retained; validation is a stratified 10% holdout from train. |
+| `mmpfn_cbis_ddsm_mass` | CBIS-DDSM (Mass) | implemented, source required | not run | Uses the original Mass fields and the same three-view image definition. The official CBIS train/test partitions are retained; validation is a stratified 10% holdout from train. |
+| `mmpfn_petfinder_i` | PetFinder-I (T+I) | implemented, source required | not run | Uses the original 19 structured fields and the original first photo only (`PetID-1.jpg`). Eligible labelled training rows are split stratified 80/10/10. |
 
-The original-paper PetFinder-I, PetFinder-t and PetFinder-A tasks are
-intentionally **not** added in this adapter extension.
+The prior one-click entries `mmpfn_airbnb`, `mmpfn_salary`, and
+`mmpfn_cloth` have been removed. PetFinder-t and PetFinder-A are intentionally
+not included because they contain text and are outside this image--tabular set.
 
 ## Encoder comparison interface
 
@@ -65,6 +66,6 @@ comparison has been completed yet.
 ## Next adapter-only work
 
 1. Download the public Anime source/images and generate its user-owned feature export.
-2. Obtain the original source folders for Airbnb, Salary and Cloth before preparing them.
+2. Obtain the original source folders for CBIS-DDSM Calc/Mass and PetFinder-I before preparing them.
 3. Do not launch a formal run until a GPU is available and the requested
    evaluation protocol is confirmed.

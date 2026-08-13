@@ -101,13 +101,13 @@ def _mt(
     )
 
 
-def _paper_text(
+def _paper_image(
     key: str,
     display_name: str,
     *,
     n_classes: int | None = None,
 ) -> DatasetSpec:
-    """Original MMPFN paper datasets with tabular and free-text inputs."""
+    """Original MMPFN paper datasets with tabular and image inputs."""
     return DatasetSpec(
         key=key,
         display_name=display_name,
@@ -116,9 +116,8 @@ def _paper_text(
         primary_metric="accuracy",
         higher_is_better=True,
         n_classes=n_classes,
-        secondary_modality="text",
-        text_model_id="google/electra-base-discriminator",
-        preparer_module="mmpfn.prepare_mmpfn_text_benchmarks",
+        secondary_modality="image",
+        preparer_module="mmpfn.prepare_mmpfn_image_benchmarks",
         default_max_train_context=10_000,
     )
 
@@ -169,12 +168,12 @@ _SPECS = [
     _mt("mt_amazon_bestseller", "Amazon Bestseller", "regression", "multabench-amazon-bestseller", 3_488, 4),
     _mt("mt_mango_mass", "Mango Mass", "regression", "multabench-mango-mass", 546, 2),
     _mt("mt_mkphoto_bots", "MkPhoto Bots", "regression", "multabench-mkphoto-bots", 13_748, 8),
-    # Text-tabular datasets used in the original MMPFN paper.  Their source
+    # Image-tabular datasets used in the original MMPFN paper. Their source
     # files are supplied explicitly to the preparer; no data are downloaded
     # automatically by the benchmark runner.
-    _paper_text("mmpfn_airbnb", "Airbnb", n_classes=10),
-    _paper_text("mmpfn_salary", "Salary"),
-    _paper_text("mmpfn_cloth", "Cloth", n_classes=5),
+    _paper_image("mmpfn_cbis_ddsm_calc", "CBIS-DDSM (Calc)", n_classes=2),
+    _paper_image("mmpfn_cbis_ddsm_mass", "CBIS-DDSM (Mass)", n_classes=2),
+    _paper_image("mmpfn_petfinder_i", "PetFinder-I (T+I)", n_classes=5),
 ]
 
 
@@ -189,9 +188,10 @@ _ALIASES = {
     "adoption": "vt_adoption",
     "dvm": "vt_dvm_car",
     "pawpularity": "vt_pawpularity",
-    "airbnb": "mmpfn_airbnb",
-    "salary": "mmpfn_salary",
-    "cloth": "mmpfn_cloth",
+    "cbis_calc": "mmpfn_cbis_ddsm_calc",
+    "cbis_mass": "mmpfn_cbis_ddsm_mass",
+    "petfinder_i": "mmpfn_petfinder_i",
+    "petfinder": "mmpfn_petfinder_i",
 }
 for _spec in _SPECS:
     _ALIASES.setdefault(_spec.key.removeprefix("vt_").removeprefix("mt_"), _spec.key)
@@ -218,7 +218,7 @@ def select_dataset_specs(selectors: list[str]) -> list[DatasetSpec]:
             requested.update(spec.key for spec in _SPECS if spec.benchmark == "vtbench")
         elif normalized in {"multabench", "multabench_text0", "multabench_image_text0"}:
             requested.update(spec.key for spec in _SPECS if spec.benchmark == "multabench")
-        elif normalized in {"mmpfn_paper", "paper_text", "mmpfn_text"}:
+        elif normalized in {"mmpfn_paper", "paper_image", "mmpfn_image"}:
             requested.update(spec.key for spec in _SPECS if spec.benchmark == "mmpfn_paper")
         else:
             requested.add(get_dataset_spec(selector).key)
